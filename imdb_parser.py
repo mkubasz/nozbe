@@ -1,10 +1,12 @@
 import concurrent.futures
+import csv
 from os import path, getcwd
 import gzip
 import shutil
 import pandas as pd
 from sqlalchemy import create_engine
 import logging
+from config import Config
 
 
 def unpack(file_name: str):
@@ -29,18 +31,30 @@ if __name__ == "__main__":
             unpack(NAME_FN)
         except Exception as ex:
             logging.error("Can't unpack files")
-
         dfTitle = tsv_to_df(TITLE_FN)
-        name = tsv_to_df(NAME_FN)
 
-        engine = create_engine('postgresql://test:test@localhost:5432/nozbe')
-        dfTitleDescription = dfTitle[['tconst', 'titleType', 'primaryTitle', 'originalTitle']]
-        dfTitleDetails = dfTitle[['tconst', 'isAdult', 'startYear', 'endYear', 'runtimeMinutes', 'genres']]
+        nameTitle = []
+        name = tsv_to_df(NAME_FN)
+        for index, row in name.iterrows():
+            for it in row.knownForTitles.split(","):
+                nameTitle.append({"nconst": row['nconst'], "tconst": it})
+        nameTitle = pd.DataFrame(nameTitle)
+
+        engine = create_engine(Config.DATABASE_URI)
+
         try:
+            name.to_sql("name", engine, index=False)
+            nameTitle.to_sql("nameTitle", engine, index=True)
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                executor.submit(dfTitleDescription.to_sql, "titleDescription", engine, index=False)
-                executor.submit(dfTitleDetails.to_sql, "titleDetails", engine, index=False)
-                executor.submit(name.to_sql, "name", engine, index=False)
+                executor.submit(dfTitle.to_sql, "title", engine)
+                executor.submit(name.to_sql, "name", engine)
+            with engine.connect() as con:
+                con.execute('ALTER TABLE "title" ADD PRIMARY KEY (tconst);')
+            with engine.connect() as con:
+                con.execute('ALTER TABLE "name" ADD PRIMARY KEY (nconst);')
+            with engine.connect() as con:
+                con.execute(
+                    'ALTER TABLE "nameTitle" ADD CONSTRAINT fk_nameTitle_name FOREIGN KEY (nconst) REFERENCES "name"(nconst);')
         except Exception as ex:
             logging.error("Can't insert data to db")
     else:
