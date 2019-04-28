@@ -1,9 +1,10 @@
+import concurrent.futures
 from os import path, getcwd
 import gzip
 import shutil
 import pandas as pd
 from sqlalchemy import create_engine
-import psycopg2
+import logging
 
 
 def unpack(file_name: str):
@@ -17,10 +18,30 @@ def tsv_to_df(file_name) -> pd.DataFrame:
     return pd.read_csv(file_name, sep='\t')
 
 
-TITLE_FILE_NAME = 'title.basics.tsv'
+if __name__ == "__main__":
 
-if path.isfile("{}.gz".format(TITLE_FILE_NAME)):
-    print(getcwd())
-    unpack(TITLE_FILE_NAME)
-    print(tsv_to_df(TITLE_FILE_NAME).head())
-    engine = create_engine('')
+    TITLE_FN = 'title.basics.tsv'
+    NAME_FN = 'name.basics.tsv'
+
+    if path.isfile("{}.gz".format(TITLE_FN)) and path.isfile("{}.gz".format(NAME_FN)):
+        try:
+            unpack(TITLE_FN)
+            unpack(NAME_FN)
+        except Exception as ex:
+            logging.error("Can't unpack files")
+
+        dfTitle = tsv_to_df(TITLE_FN)
+        name = tsv_to_df(NAME_FN)
+
+        engine = create_engine('postgresql://test:test@localhost:5432/nozbe')
+        dfTitleDescription = dfTitle[['tconst', 'titleType', 'primaryTitle', 'originalTitle']]
+        dfTitleDetails = dfTitle[['tconst', 'isAdult', 'startYear', 'endYear', 'runtimeMinutes', 'genres']]
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                executor.submit(dfTitleDescription.to_sql, "titleDescription", engine, index=False)
+                executor.submit(dfTitleDetails.to_sql, "titleDetails", engine, index=False)
+                executor.submit(name.to_sql, "name", engine, index=False)
+        except Exception as ex:
+            logging.error("Can't insert data to db")
+    else:
+        logging.error("Files don't exist")
